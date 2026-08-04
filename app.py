@@ -12,6 +12,32 @@ from PIL import Image
 icon_img = Image.open("icon.png")
 st.set_page_config(page_title="Our Music Hub", page_icon=icon_img, layout="centered")
 
+import streamlit.components.v1 as components
+
+# ... existing st.set_page_config line ...
+
+# Inject Javascript to override the mobile home screen icon
+components.html(
+    f"""
+    <script>
+        // Target the main Streamlit page
+        const doc = window.parent.document;
+        
+        // Remove Streamlit's default Apple Touch Icon
+        const existingIcons = doc.querySelectorAll('link[rel="apple-touch-icon"]');
+        existingIcons.forEach(icon => icon.remove());
+        
+        // Create and inject your custom icon
+        const newIcon = doc.createElement('link');
+        newIcon.rel = 'apple-touch-icon';
+        newIcon.href = 'https://github.com/HSweazey/swapple/blob/d32fad21789038c025941a7af181ad5edc130db1/icon.png';
+        doc.head.appendChild(newIcon);
+    </script>
+    """,
+    height=0,
+    width=0,
+)
+
 st.markdown("""
     <style>
     /* Pastel pink background */
