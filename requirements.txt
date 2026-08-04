@@ -1,0 +1,5 @@
+streamlit
+requests
+spotipy
+st-gsheets-connection
+pandas

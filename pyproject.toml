@@ -1,0 +1,13 @@
+[project]
+name = "swapple"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=3.0.5",
+    "requests>=2.34.2",
+    "spotipy>=2.26.0",
+    "st-gsheets-connection>=0.1.0",
+    "streamlit>=1.61.0",
+]

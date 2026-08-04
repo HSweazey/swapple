@@ -179,3 +179,8 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+.DS_Store
+keys.py
+music-hub-504522-10d7100b84c2.json
+.streamlit/
