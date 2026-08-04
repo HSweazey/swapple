@@ -7,7 +7,10 @@ import pandas as pd
 from datetime import datetime
 
 # --- PAGE SETUP & AESTHETICS ---
-st.set_page_config(page_title="Our Music Hub", page_icon="🌸", layout="centered")
+from PIL import Image
+
+icon_img = Image.open("icon.png")
+st.set_page_config(page_title="Our Music Hub", page_icon=icon_img, layout="centered")
 
 st.markdown("""
     <style>
