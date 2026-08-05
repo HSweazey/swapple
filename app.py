@@ -5,32 +5,29 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+from PIL import Image
+import streamlit.components.v1 as components
+import os
 
 # --- PAGE SETUP & AESTHETICS ---
-from PIL import Image
-
-icon_img = Image.open("icon.png")
-st.set_page_config(page_title="Our Music Hub", page_icon=icon_img, layout="centered")
-
-import streamlit.components.v1 as components
-
-# ... existing st.set_page_config line ...
+# Fallback to emoji if icon.png isn't found locally yet
+if os.path.exists("icon.png"):
+    icon_img = Image.open("icon.png")
+    st.set_page_config(page_title="Our Music Hub", page_icon=icon_img, layout="centered")
+else:
+    st.set_page_config(page_title="Our Music Hub", page_icon="🌸", layout="centered")
 
 # Inject Javascript to override the mobile home screen icon
 components.html(
     f"""
     <script>
-        // Target the main Streamlit page
         const doc = window.parent.document;
-        
-        // Remove Streamlit's default Apple Touch Icon
         const existingIcons = doc.querySelectorAll('link[rel="apple-touch-icon"]');
         existingIcons.forEach(icon => icon.remove());
-        
-        // Create and inject your custom icon
         const newIcon = doc.createElement('link');
         newIcon.rel = 'apple-touch-icon';
-        newIcon.href = 'https://github.com/HSweazey/swapple/blob/d32fad21789038c025941a7af181ad5edc130db1/icon.png';
+        // PASTE YOUR RAW GITHUB IMAGE URL BELOW
+        newIcon.href = 'https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/our-music-hub/main/icon.png';
         doc.head.appendChild(newIcon);
     </script>
     """,
@@ -74,25 +71,6 @@ st.markdown("""
         margin-bottom: 10px; 
         border: 2px solid #FFF0F5;
     }
-    /* Cute Playlist Badge */
-    .playlist-badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: bold;
-        margin-bottom: 10px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    .badge-hannah {
-        background-color: #FFF0F5;
-        color: #FF69B4;
-    }
-    .badge-alyssa {
-        background-color: #F0F8FF;
-        color: #6495ED;
-    }
     /* Cute links */
     .link-container {
         display: flex;
@@ -128,20 +106,12 @@ st.markdown("""
     .stCheckbox {
         display: flex;
         justify-content: center;
-        margin-bottom: 20px;
+        margin-bottom: 25px;
     }
-    /* Force columns to stay side-by-side on mobile devices */
-    @media (max-width: 640px) {
-        div[data-testid="stHorizontalBlock"] {
-            flex-direction: row !important;
-            flex-wrap: nowrap !important;
-            gap: 10px;
-        }
-        div[data-testid="column"] {
-            width: 50% !important;
-            flex: 1 1 50% !important;
-            min-width: 0 !important;
-        }
+    /* Style the tabs */
+    button[data-baseweb="tab"] {
+        font-size: 18px !important;
+        font-weight: bold !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -267,9 +237,10 @@ with st.container():
 
 st.divider()
 
-# --- GALLERY VIEW ---
+# --- GALLERY VIEW (TABS) ---
 st.write("### The Vault 💖")
 
+# Read the sheet again, explicitly setting ttl=0 to bypass cache
 df = conn.read(worksheet="Sheet1", ttl=0)
 df = df.dropna(subset=["Title", "Artist"]) 
 
@@ -278,88 +249,108 @@ if not df.empty:
         df["Listened"] = False
     df["Listened"] = df["Listened"].fillna(False).astype(bool)
     
+    # Sort the dataframe: Unlistened (False) at top, then by Date Added (Newest first)
     df = df.sort_values(by=["Listened", "Date Added"], ascending=[True, False]).reset_index(drop=True)
     
-    # Split the dataframe into two separate lists
+    # Split the dataframe for each tab
     df_hannah = df[df["Playlist"] == "Hannah"]
     df_alyssa = df[df["Playlist"] == "Alyssa"]
     
-    col_hannah, col_alyssa = st.columns(2)
+    tab_hannah, tab_alyssa = st.tabs(["🌸 Hannah's List", "🎧 Alyssa's List"])
     
-    # --- HANNAH'S COLUMN ---
-    with col_hannah:
-        st.markdown("<h4 style='text-align: center; color: #FF69B4;'>Hannah's List</h4>", unsafe_allow_html=True)
-        for index, row in df_hannah.iterrows():
-            title = row.get("Title", "Unknown")
-            artist = row.get("Artist", "Unknown")
-            spotify_id = row.get("Spotify ID", "")
-            spotify_url = row.get("Spotify URL", "")
-            apple_url = row.get("Apple URL", "")
-            current_status = row.get("Listened", False)
-            
-            card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'}; padding: 10px;">
-<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333; font-size: 16px;">{title}</h4>
-<p style="margin-top: 0px; margin-bottom: 10px; color: #666; font-style: italic; font-size: 12px;">{artist}</p>"""
-            
-            if pd.notna(spotify_id) and spotify_id != "":
-                card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
-            
-            if pd.notna(apple_url) and apple_url != "":
-                apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
-                card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
-            
-            card_html += '<div class="link-container" style="flex-wrap: wrap;">'
-            if pd.notna(apple_url) and apple_url != "":
-                card_html += f'<a href="{apple_url}" target="_blank" class="apple-link" style="padding: 4px 8px; font-size: 11px;">Apple</a>'
-            if pd.notna(spotify_url) and spotify_url != "":
-                card_html += f'<a href="{spotify_url}" target="_blank" class="spotify-link" style="padding: 4px 8px; font-size: 11px;">Spotify</a>'
-            card_html += '</div></div>'
-            
-            st.markdown(card_html, unsafe_allow_html=True)
-            
-            new_status = st.checkbox("Listened", value=current_status, key=f"h_listened_{spotify_id}_{index}")
-            if new_status != current_status:
-                df.at[index, "Listened"] = new_status
-                conn.update(worksheet="Sheet1", data=df)
-                st.cache_data.clear()
-                st.rerun()
+    # --- HANNAH'S TAB ---
+    with tab_hannah:
+        if df_hannah.empty:
+            st.info("Hannah's vault is empty!")
+        else:
+            for index, row in df_hannah.iterrows():
+                title = row.get("Title", "Unknown")
+                artist = row.get("Artist", "Unknown")
+                spotify_id = row.get("Spotify ID", "")
+                spotify_url = row.get("Spotify URL", "")
+                apple_url = row.get("Apple URL", "")
+                current_status = row.get("Listened", False)
+                
+                # Render the HTML Card
+                card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'};">
+<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
+<p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
+                
+                # Embed Spotify
+                if pd.notna(spotify_id) and spotify_id != "":
+                    card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
+                
+                # Embed Apple Music
+                if pd.notna(apple_url) and apple_url != "":
+                    apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
+                    card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
+                
+                card_html += '<div class="link-container">'
+                if pd.notna(apple_url) and apple_url != "":
+                    card_html += f'<a href="{apple_url}" target="_blank" class="apple-link">Apple 🍎</a>'
+                if pd.notna(spotify_url) and spotify_url != "":
+                    card_html += f'<a href="{spotify_url}" target="_blank" class="spotify-link">Spotify 🟢</a>'
+                card_html += '</div></div>'
+                
+                st.markdown(card_html, unsafe_allow_html=True)
+                
+                unique_key = f"h_listened_{spotify_id}_{index}"
+                new_status = st.checkbox("Mark as Listened ✔️" if not current_status else "Listened 🎧", 
+                                         value=current_status, 
+                                         key=unique_key)
+                
+                if new_status != current_status:
+                    df.at[index, "Listened"] = new_status
+                    conn.update(worksheet="Sheet1", data=df)
+                    st.cache_data.clear()
+                    st.rerun()
 
-    # --- ALYSSA'S COLUMN ---
-    with col_alyssa:
-        st.markdown("<h4 style='text-align: center; color: #6495ED;'>Alyssa's List</h4>", unsafe_allow_html=True)
-        for index, row in df_alyssa.iterrows():
-            title = row.get("Title", "Unknown")
-            artist = row.get("Artist", "Unknown")
-            spotify_id = row.get("Spotify ID", "")
-            spotify_url = row.get("Spotify URL", "")
-            apple_url = row.get("Apple URL", "")
-            current_status = row.get("Listened", False)
-            
-            card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'}; padding: 10px;">
-<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333; font-size: 16px;">{title}</h4>
-<p style="margin-top: 0px; margin-bottom: 10px; color: #666; font-style: italic; font-size: 12px;">{artist}</p>"""
-            
-            if pd.notna(spotify_id) and spotify_id != "":
-                card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
-            
-            if pd.notna(apple_url) and apple_url != "":
-                apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
-                card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
-            
-            card_html += '<div class="link-container" style="flex-wrap: wrap;">'
-            if pd.notna(apple_url) and apple_url != "":
-                card_html += f'<a href="{apple_url}" target="_blank" class="apple-link" style="padding: 4px 8px; font-size: 11px;">Apple</a>'
-            if pd.notna(spotify_url) and spotify_url != "":
-                card_html += f'<a href="{spotify_url}" target="_blank" class="spotify-link" style="padding: 4px 8px; font-size: 11px;">Spotify</a>'
-            card_html += '</div></div>'
-            
-            st.markdown(card_html, unsafe_allow_html=True)
-            
-            new_status = st.checkbox("Listened", value=current_status, key=f"a_listened_{spotify_id}_{index}")
-            if new_status != current_status:
-                df.at[index, "Listened"] = new_status
-                conn.update(worksheet="Sheet1", data=df)
-                st.cache_data.clear()
-                st.rerun()
+    # --- ALYSSA'S TAB ---
+    with tab_alyssa:
+        if df_alyssa.empty:
+            st.info("Alyssa's vault is empty!")
+        else:
+            for index, row in df_alyssa.iterrows():
+                title = row.get("Title", "Unknown")
+                artist = row.get("Artist", "Unknown")
+                spotify_id = row.get("Spotify ID", "")
+                spotify_url = row.get("Spotify URL", "")
+                apple_url = row.get("Apple URL", "")
+                current_status = row.get("Listened", False)
+                
+                # Render the HTML Card
+                card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'};">
+<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
+<p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
+                
+                # Embed Spotify
+                if pd.notna(spotify_id) and spotify_id != "":
+                    card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
+                
+                # Embed Apple Music
+                if pd.notna(apple_url) and apple_url != "":
+                    apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
+                    card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
+                
+                card_html += '<div class="link-container">'
+                if pd.notna(apple_url) and apple_url != "":
+                    card_html += f'<a href="{apple_url}" target="_blank" class="apple-link">Apple 🍎</a>'
+                if pd.notna(spotify_url) and spotify_url != "":
+                    card_html += f'<a href="{spotify_url}" target="_blank" class="spotify-link">Spotify 🟢</a>'
+                card_html += '</div></div>'
+                
+                st.markdown(card_html, unsafe_allow_html=True)
+                
+                unique_key = f"a_listened_{spotify_id}_{index}"
+                new_status = st.checkbox("Mark as Listened ✔️" if not current_status else "Listened 🎧", 
+                                         value=current_status, 
+                                         key=unique_key)
+                
+                if new_status != current_status:
+                    df.at[index, "Listened"] = new_status
+                    conn.update(worksheet="Sheet1", data=df)
+                    st.cache_data.clear()
+                    st.rerun()
+
 else:
     st.info("The vault is empty! Add your first track above. 🎶")
