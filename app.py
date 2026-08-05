@@ -8,16 +8,15 @@ from datetime import datetime
 from PIL import Image
 import streamlit.components.v1 as components
 import os
+import re
 
 # --- PAGE SETUP & AESTHETICS ---
-# Fallback to emoji if icon.png isn't found locally yet
 if os.path.exists("icon.png"):
     icon_img = Image.open("icon.png")
     st.set_page_config(page_title="Our Music Hub", page_icon=icon_img, layout="centered")
 else:
     st.set_page_config(page_title="Our Music Hub", page_icon="🌸", layout="centered")
 
-# Inject Javascript to override the mobile home screen icon
 components.html(
     f"""
     <script>
@@ -26,7 +25,6 @@ components.html(
         existingIcons.forEach(icon => icon.remove());
         const newIcon = doc.createElement('link');
         newIcon.rel = 'apple-touch-icon';
-        // PASTE YOUR RAW GITHUB IMAGE URL BELOW
         newIcon.href = 'https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/our-music-hub/main/icon.png';
         doc.head.appendChild(newIcon);
     </script>
@@ -37,19 +35,12 @@ components.html(
 
 st.markdown("""
     <style>
-    /* Pastel pink background */
-    .stApp {
-        background-color: #FDF1F4; 
-    }
-    /* Rounded corners for inputs */
-    div[data-baseweb="input"] > div, div[data-baseweb="radio"] {
-        border-radius: 20px !important;
-    }
+    .stApp { background-color: #FDF1F4; }
+    div[data-baseweb="input"] > div, div[data-baseweb="radio"] { border-radius: 20px !important; }
     div[data-baseweb="input"] > div {
         border: 1px solid #FFC0CB !important;
         background-color: white !important;
     }
-    /* Rounded buttons */
     div.stButton > button:first-child {
         border-radius: 20px;
         background-color: #FFB6C1;
@@ -58,10 +49,7 @@ st.markdown("""
         font-weight: bold;
         transition: 0.3s;
     }
-    div.stButton > button:first-child:hover {
-        background-color: #FF69B4;
-    }
-    /* Gallery cards */
+    div.stButton > button:first-child:hover { background-color: #FF69B4; }
     .gallery-card {
         background-color: white;
         padding: 20px;
@@ -71,7 +59,6 @@ st.markdown("""
         margin-bottom: 10px; 
         border: 2px solid #FFF0F5;
     }
-    /* Cute links */
     .link-container {
         display: flex;
         justify-content: center;
@@ -86,37 +73,48 @@ st.markdown("""
         font-size: 13px;
         transition: 0.2s;
     }
-    .apple-link {
-        background-color: #FFE4E1;
-        color: #FF69B4;
-    }
-    .apple-link:hover {
-        background-color: #FFB6C1;
-        color: white;
-    }
-    .spotify-link {
-        background-color: #E8F5E9;
-        color: #1DB954;
-    }
-    .spotify-link:hover {
-        background-color: #1DB954;
-        color: white;
-    }
-    /* Center the Streamlit checkboxes under the cards */
+    .apple-link { background-color: #FFE4E1; color: #FF69B4; }
+    .apple-link:hover { background-color: #FFB6C1; color: white; }
+    .spotify-link { background-color: #E8F5E9; color: #1DB954; }
+    .spotify-link:hover { background-color: #1DB954; color: white; }
     .stCheckbox {
         display: flex;
         justify-content: center;
         margin-bottom: 25px;
     }
-    /* Style the tabs */
     button[data-baseweb="tab"] {
-        font-size: 18px !important;
+        font-size: 16px !important;
         font-weight: bold !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # --- API FUNCTIONS ---
+def get_details_from_link(link: str) -> tuple[str, str] | None:
+    """Extracts the Track Title and Artist from a pasted Spotify or Apple Music URL."""
+    try:
+        if "spotify.com" in link and "track" in link:
+            track_id = link.split("track/")[1].split("?")[0]
+            auth_manager = SpotifyClientCredentials(
+                client_id=st.secrets["SPOTIFY_CLIENT_ID"], 
+                client_secret=st.secrets["SPOTIFY_CLIENT_SECRET"]
+            )
+            sp = spotipy.Spotify(auth_manager=auth_manager)
+            track = sp.track(track_id)
+            return track["name"], track["artists"][0]["name"]
+            
+        elif "music.apple.com" in link:
+            match = re.search(r'[?&]i=(\d+)', link)
+            if match:
+                track_id = match.group(1)
+                response = requests.get(f"https://itunes.apple.com/lookup?id={track_id}", timeout=5)
+                data = response.json()
+                if data.get("results"):
+                    return data["results"][0]["trackName"], data["results"][0]["artistName"]
+    except Exception as e:
+        st.error(f"Error reading link: {e}")
+    return None
+
 def get_spotify_track_info(song_title: str, artist: str) -> dict | None:
     try:
         auth_manager = SpotifyClientCredentials(
@@ -124,7 +122,6 @@ def get_spotify_track_info(song_title: str, artist: str) -> dict | None:
             client_secret=st.secrets["SPOTIFY_CLIENT_SECRET"]
         )
         sp = spotipy.Spotify(auth_manager=auth_manager)
-        
         query = f"track:{song_title} artist:{artist}"
         results = sp.search(q=query, type="track", limit=1)
         items = results.get("tracks", {}).get("items", [])
@@ -143,8 +140,7 @@ def get_spotify_track_info(song_title: str, artist: str) -> dict | None:
             "artist": track["artists"][0]["name"],
             "album_art": track["album"]["images"][0]["url"] if track["album"]["images"] else None
         }
-    except Exception as e:
-        st.error(f"Spotify API Error: {e}")
+    except Exception:
         return None
 
 def get_apple_music_info(song_title: str, artist: str) -> dict | None:
@@ -154,21 +150,18 @@ def get_apple_music_info(song_title: str, artist: str) -> dict | None:
         response = requests.get(endpoint, params=params, timeout=5)
         response.raise_for_status()
         data = response.json()
-        
         results = data.get("results", [])
         if not results: return None
         
         track = results[0]
         artwork_url = track.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
-        
         return {
             "apple_url": track.get("trackViewUrl"),
             "title": track.get("trackName"),
             "artist": track.get("artistName"),
             "album_art": artwork_url
         }
-    except Exception as e:
-        st.error(f"iTunes API Error: {e}")
+    except Exception:
         return None
 
 def fetch_song_data(song_title: str, artist: str) -> dict | None:
@@ -191,10 +184,7 @@ def fetch_song_data(song_title: str, artist: str) -> dict | None:
 # --- MAIN APP UI ---
 st.title("🌸 Our Music Hub 🌸")
 
-# Initialize Google Sheets Connection
 conn = st.connection("gsheets", type=GSheetsConnection)
-
-# Set ttl=0 so it pulls live data on startup, bypassing the cache
 df = conn.read(worksheet="Sheet1", ttl=0)
 
 expected_columns = ["Title", "Artist", "Spotify ID", "Spotify URL", "Apple URL", "Album Art", "Date Added", "Playlist", "Listened"]
@@ -204,18 +194,42 @@ if df.empty or len(df.columns) == 0:
 # --- INPUT SECTION ---
 with st.container():
     st.write("### Drop a new rec! 🎧")
-    col1, col2 = st.columns(2)
-    with col1:
-        song_input = st.text_input("Song Title", placeholder="e.g. Pink Pony Club")
-    with col2:
-        artist_input = st.text_input("Artist", placeholder="e.g. Chappell Roan")
+    
+    # Sub-tabs for input methods
+    input_tab1, input_tab2 = st.tabs(["📝 Type it out", "🔗 Paste a link"])
+    
+    with input_tab1:
+        col1, col2 = st.columns(2)
+        with col1:
+            song_input = st.text_input("Song Title", placeholder="e.g. Pink Pony Club")
+        with col2:
+            artist_input = st.text_input("Artist", placeholder="e.g. Chappell Roan")
+            
+    with input_tab2:
+        link_input = st.text_input("Spotify or Apple Music Link", placeholder="https://open.spotify.com/track/...")
         
     playlist_selection = st.radio("Whose playlist is this for?", ["Hannah", "Alyssa"], horizontal=True)
         
     if st.button("Search & Save ✨"):
-        if song_input and artist_input:
-            with st.spinner("Hunting for the tracks..."):
-                new_song = fetch_song_data(song_input, artist_input)
+        search_title, search_artist = None, None
+        
+        # Decide which input method was used (Link overrides typed text if both are filled)
+        if link_input:
+            with st.spinner("Extracting info from link..."):
+                details = get_details_from_link(link_input)
+                if details:
+                    search_title, search_artist = details
+                else:
+                    st.error("Couldn't extract the song from that link. Ensure it's a direct track link!")
+        elif song_input and artist_input:
+            search_title = song_input
+            search_artist = artist_input
+        else:
+            st.warning("Please enter a song and artist, or paste a link!")
+            
+        if search_title and search_artist:
+            with st.spinner(f"Hunting for '{search_title}'..."):
+                new_song = fetch_song_data(search_title, search_artist)
                 
                 if new_song:
                     new_song["Playlist"] = playlist_selection
@@ -229,7 +243,6 @@ with st.container():
                         conn.update(worksheet="Sheet1", data=updated_df)
                         
                         st.success(f"Added '{new_song['Title']}' to {playlist_selection}'s vault! 🎉")
-                        # Clear cache and instantly refresh to show new data
                         st.cache_data.clear()
                         st.rerun()
                 else:
@@ -240,7 +253,6 @@ st.divider()
 # --- GALLERY VIEW (TABS) ---
 st.write("### The Vault 💖")
 
-# Read the sheet again, explicitly setting ttl=0 to bypass cache
 df = conn.read(worksheet="Sheet1", ttl=0)
 df = df.dropna(subset=["Title", "Artist"]) 
 
@@ -249,10 +261,8 @@ if not df.empty:
         df["Listened"] = False
     df["Listened"] = df["Listened"].fillna(False).astype(bool)
     
-    # Sort the dataframe: Unlistened (False) at top, then by Date Added (Newest first)
     df = df.sort_values(by=["Listened", "Date Added"], ascending=[True, False]).reset_index(drop=True)
     
-    # Split the dataframe for each tab
     df_hannah = df[df["Playlist"] == "Hannah"]
     df_alyssa = df[df["Playlist"] == "Alyssa"]
     
@@ -271,16 +281,13 @@ if not df.empty:
                 apple_url = row.get("Apple URL", "")
                 current_status = row.get("Listened", False)
                 
-                # Render the HTML Card
                 card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'};">
 <h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
 <p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
                 
-                # Embed Spotify
                 if pd.notna(spotify_id) and spotify_id != "":
                     card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
                 
-                # Embed Apple Music
                 if pd.notna(apple_url) and apple_url != "":
                     apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
                     card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
@@ -318,16 +325,13 @@ if not df.empty:
                 apple_url = row.get("Apple URL", "")
                 current_status = row.get("Listened", False)
                 
-                # Render the HTML Card
                 card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'};">
 <h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
 <p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
                 
-                # Embed Spotify
                 if pd.notna(spotify_id) and spotify_id != "":
                     card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
                 
-                # Embed Apple Music
                 if pd.notna(apple_url) and apple_url != "":
                     apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
                     card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
