@@ -48,6 +48,7 @@ st.markdown("""
         border: none;
         font-weight: bold;
         transition: 0.3s;
+        width: 100%;
     }
     div.stButton > button:first-child:hover { background-color: #FF69B4; }
     .gallery-card {
@@ -80,18 +81,22 @@ st.markdown("""
     .stCheckbox {
         display: flex;
         justify-content: center;
-        margin-bottom: 25px;
+        align-items: center;
+        height: 100%;
     }
     button[data-baseweb="tab"] {
         font-size: 16px !important;
         font-weight: bold !important;
+    }
+    /* Adds spacing below the action area (checkbox & delete) */
+    .action-container {
+        margin-bottom: 30px;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # --- API FUNCTIONS ---
 def get_details_from_link(link: str) -> tuple[str, str] | None:
-    """Extracts the Track Title and Artist from a pasted Spotify or Apple Music URL."""
     try:
         if "spotify.com" in link and "track" in link:
             track_id = link.split("track/")[1].split("?")[0]
@@ -195,7 +200,6 @@ if df.empty or len(df.columns) == 0:
 with st.container():
     st.write("### Drop a new rec! 🎧")
     
-    # Sub-tabs for input methods
     input_tab1, input_tab2 = st.tabs(["📝 Type it out", "🔗 Paste a link"])
     
     with input_tab1:
@@ -213,7 +217,6 @@ with st.container():
     if st.button("Search & Save ✨"):
         search_title, search_artist = None, None
         
-        # Decide which input method was used (Link overrides typed text if both are filled)
         if link_input:
             with st.spinner("Extracting info from link..."):
                 details = get_details_from_link(link_input)
@@ -261,6 +264,7 @@ if not df.empty:
         df["Listened"] = False
     df["Listened"] = df["Listened"].fillna(False).astype(bool)
     
+    # Crucial: Reset index creates a definitive row ID we can use for exact deletions
     df = df.sort_values(by=["Listened", "Date Added"], ascending=[True, False]).reset_index(drop=True)
     
     df_hannah = df[df["Playlist"] == "Hannah"]
@@ -301,11 +305,25 @@ if not df.empty:
                 
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                unique_key = f"h_listened_{spotify_id}_{index}"
-                new_status = st.checkbox("Mark as Listened ✔️" if not current_status else "Listened 🎧", 
-                                         value=current_status, 
-                                         key=unique_key)
+                # --- NEW: Action Bar (Checkbox + Delete Button) ---
+                st.markdown('<div class="action-container">', unsafe_allow_html=True)
+                action_col1, action_col2 = st.columns(2)
                 
+                with action_col1:
+                    new_status = st.checkbox("Listened ✔️" if current_status else "Listened 🎧", 
+                                             value=current_status, 
+                                             key=f"h_listened_{spotify_id}_{index}")
+                
+                with action_col2:
+                    if st.button("Remove 🗑️", key=f"del_h_{spotify_id}_{index}"):
+                        df = df.drop(index)
+                        conn.update(worksheet="Sheet1", data=df)
+                        st.cache_data.clear()
+                        st.rerun()
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Check for listened status update
                 if new_status != current_status:
                     df.at[index, "Listened"] = new_status
                     conn.update(worksheet="Sheet1", data=df)
@@ -345,11 +363,25 @@ if not df.empty:
                 
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                unique_key = f"a_listened_{spotify_id}_{index}"
-                new_status = st.checkbox("Mark as Listened ✔️" if not current_status else "Listened 🎧", 
-                                         value=current_status, 
-                                         key=unique_key)
+                # --- NEW: Action Bar (Checkbox + Delete Button) ---
+                st.markdown('<div class="action-container">', unsafe_allow_html=True)
+                action_col1, action_col2 = st.columns(2)
                 
+                with action_col1:
+                    new_status = st.checkbox("Listened ✔️" if current_status else "Listened 🎧", 
+                                             value=current_status, 
+                                             key=f"a_listened_{spotify_id}_{index}")
+                
+                with action_col2:
+                    if st.button("Remove 🗑️", key=f"del_a_{spotify_id}_{index}"):
+                        df = df.drop(index)
+                        conn.update(worksheet="Sheet1", data=df)
+                        st.cache_data.clear()
+                        st.rerun()
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Check for listened status update
                 if new_status != current_status:
                     df.at[index, "Listened"] = new_status
                     conn.update(worksheet="Sheet1", data=df)
