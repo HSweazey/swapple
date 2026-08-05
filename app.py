@@ -190,7 +190,7 @@ def fetch_song_data(song_title: str, artist: str) -> dict | None:
 st.title("🌸 Our Music Hub 🌸")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(worksheet="Sheet1", ttl=0)
+df = conn.read(worksheet="Sheet1", ttl="10m")
 
 expected_columns = ["Title", "Artist", "Spotify ID", "Spotify URL", "Apple URL", "Album Art", "Date Added", "Playlist", "Listened"]
 if df.empty or len(df.columns) == 0:
