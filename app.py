@@ -88,7 +88,6 @@ st.markdown("""
         font-size: 16px !important;
         font-weight: bold !important;
     }
-    /* Adds spacing below the action area (checkbox & delete) */
     .action-container {
         margin-bottom: 30px;
     }
@@ -150,24 +149,35 @@ def get_spotify_track_info(song_title: str, artist: str) -> dict | None:
 
 def get_apple_music_info(song_title: str, artist: str) -> dict | None:
     endpoint = "https://itunes.apple.com/search"
-    params = {"term": f"{song_title} {artist}", "media": "music", "entity": "song", "limit": 1}
-    try:
-        response = requests.get(endpoint, params=params, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        results = data.get("results", [])
-        if not results: return None
-        
-        track = results[0]
-        artwork_url = track.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
-        return {
-            "apple_url": track.get("trackViewUrl"),
-            "title": track.get("trackName"),
-            "artist": track.get("artistName"),
-            "album_art": artwork_url
-        }
-    except Exception:
-        return None
+    
+    # Create a stripped version of the title to improve Apple Music match rates
+    # This removes "- Single", "(feat. x)", "[Remastered]", etc.
+    clean_title = re.split(r' - | \(| \[', song_title)[0].strip()
+    
+    # Try the exact title first, then fallback to the cleaned title
+    queries = [f"{song_title} {artist}", f"{clean_title} {artist}"]
+    
+    for q in queries:
+        params = {"term": q, "media": "music", "entity": "song", "limit": 1}
+        try:
+            response = requests.get(endpoint, params=params, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            results = data.get("results", [])
+            
+            if results:
+                track = results[0]
+                artwork_url = track.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
+                return {
+                    "apple_url": track.get("trackViewUrl"),
+                    "title": track.get("trackName"),
+                    "artist": track.get("artistName"),
+                    "album_art": artwork_url
+                }
+        except Exception:
+            continue # If this query fails, try the next one
+            
+    return None # Returns None if all queries fail
 
 def fetch_song_data(song_title: str, artist: str) -> dict | None:
     spotify_data = get_spotify_track_info(song_title, artist)
@@ -185,6 +195,29 @@ def fetch_song_data(song_title: str, artist: str) -> dict | None:
         "Album Art": spotify_data["album_art"] if spotify_data else apple_data["album_art"],
         "Date Added": datetime.now().strftime("%Y-%m-%d %H:%M")
     }
+
+# Helper to render the HTML cards so we don't repeat code
+def render_song_card(title, artist, spotify_id, spotify_url, apple_url, current_status=False):
+    card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'};">
+<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
+<p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
+    
+    if pd.notna(spotify_id) and spotify_id != "":
+        card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
+    
+    if pd.notna(apple_url) and apple_url != "":
+        apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
+        card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
+    
+    card_html += '<div class="link-container">'
+    if pd.notna(apple_url) and apple_url != "":
+        card_html += f'<a href="{apple_url}" target="_blank" class="apple-link">Apple 🍎</a>'
+    if pd.notna(spotify_url) and spotify_url != "":
+        card_html += f'<a href="{spotify_url}" target="_blank" class="spotify-link">Spotify 🟢</a>'
+    card_html += '</div></div>'
+    
+    st.markdown(card_html, unsafe_allow_html=True)
+
 
 # --- MAIN APP UI ---
 st.title("🌸 Our Music Hub 🌸")
@@ -213,8 +246,15 @@ with st.container():
         link_input = st.text_input("Spotify or Apple Music Link", placeholder="https://open.spotify.com/track/...")
         
     playlist_selection = st.radio("Whose playlist is this for?", ["Hannah", "Alyssa"], horizontal=True)
+    
+    # Put the two action buttons side-by-side
+    btn_col1, btn_col2 = st.columns(2)
+    with btn_col1:
+        save_clicked = st.button("Search & Save ✨", use_container_width=True)
+    with btn_col2:
+        generic_clicked = st.button("Generic Search 🔍", use_container_width=True)
         
-    if st.button("Search & Save ✨"):
+    if save_clicked or generic_clicked:
         search_title, search_artist = None, None
         
         if link_input:
@@ -235,19 +275,30 @@ with st.container():
                 new_song = fetch_song_data(search_title, search_artist)
                 
                 if new_song:
-                    new_song["Playlist"] = playlist_selection
-                    new_song["Listened"] = False 
-                    
-                    if not df.empty and new_song["Spotify ID"] in df["Spotify ID"].values and new_song["Spotify ID"] != "":
-                        st.warning(f"You already have '{new_song['Title']}' in the vault!")
-                    else:
-                        new_row_df = pd.DataFrame([new_song])
-                        updated_df = pd.concat([new_row_df, df], ignore_index=True)
-                        conn.update(worksheet="Sheet1", data=updated_df)
+                    if save_clicked:
+                        new_song["Playlist"] = playlist_selection
+                        new_song["Listened"] = False 
                         
-                        st.success(f"Added '{new_song['Title']}' to {playlist_selection}'s vault! 🎉")
-                        st.cache_data.clear()
-                        st.rerun()
+                        if not df.empty and new_song["Spotify ID"] in df["Spotify ID"].values and new_song["Spotify ID"] != "":
+                            st.warning(f"You already have '{new_song['Title']}' in the vault!")
+                        else:
+                            new_row_df = pd.DataFrame([new_song])
+                            updated_df = pd.concat([new_row_df, df], ignore_index=True)
+                            conn.update(worksheet="Sheet1", data=updated_df)
+                            
+                            st.success(f"Added '{new_song['Title']}' to {playlist_selection}'s vault! 🎉")
+                            st.cache_data.clear()
+                            st.rerun()
+                    elif generic_clicked:
+                        st.success("Search complete! (Not saved to vault)")
+                        # Render the card right here without saving
+                        render_song_card(
+                            new_song["Title"], 
+                            new_song["Artist"], 
+                            new_song["Spotify ID"], 
+                            new_song["Spotify URL"], 
+                            new_song["Apple URL"]
+                        )
                 else:
                     st.error("Couldn't find that exact song. Check the spelling and try again!")
 
@@ -256,7 +307,7 @@ st.divider()
 # --- GALLERY VIEW (TABS) ---
 st.write("### The Vault 💖")
 
-df = conn.read(worksheet="Sheet1", ttl=0)
+df = conn.read(worksheet="Sheet1", ttl="10m")
 df = df.dropna(subset=["Title", "Artist"]) 
 
 if not df.empty:
@@ -264,7 +315,6 @@ if not df.empty:
         df["Listened"] = False
     df["Listened"] = df["Listened"].fillna(False).astype(bool)
     
-    # Crucial: Reset index creates a definitive row ID we can use for exact deletions
     df = df.sort_values(by=["Listened", "Date Added"], ascending=[True, False]).reset_index(drop=True)
     
     df_hannah = df[df["Playlist"] == "Hannah"]
@@ -278,52 +328,32 @@ if not df.empty:
             st.info("Hannah's vault is empty!")
         else:
             for index, row in df_hannah.iterrows():
-                title = row.get("Title", "Unknown")
-                artist = row.get("Artist", "Unknown")
-                spotify_id = row.get("Spotify ID", "")
-                spotify_url = row.get("Spotify URL", "")
-                apple_url = row.get("Apple URL", "")
-                current_status = row.get("Listened", False)
+                render_song_card(
+                    row.get("Title", "Unknown"), 
+                    row.get("Artist", "Unknown"), 
+                    row.get("Spotify ID", ""), 
+                    row.get("Spotify URL", ""), 
+                    row.get("Apple URL", ""), 
+                    row.get("Listened", False)
+                )
                 
-                card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'};">
-<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
-<p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
-                
-                if pd.notna(spotify_id) and spotify_id != "":
-                    card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
-                
-                if pd.notna(apple_url) and apple_url != "":
-                    apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
-                    card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
-                
-                card_html += '<div class="link-container">'
-                if pd.notna(apple_url) and apple_url != "":
-                    card_html += f'<a href="{apple_url}" target="_blank" class="apple-link">Apple 🍎</a>'
-                if pd.notna(spotify_url) and spotify_url != "":
-                    card_html += f'<a href="{spotify_url}" target="_blank" class="spotify-link">Spotify 🟢</a>'
-                card_html += '</div></div>'
-                
-                st.markdown(card_html, unsafe_allow_html=True)
-                
-                # --- NEW: Action Bar (Checkbox + Delete Button) ---
                 st.markdown('<div class="action-container">', unsafe_allow_html=True)
                 action_col1, action_col2 = st.columns(2)
                 
                 with action_col1:
+                    current_status = row.get("Listened", False)
                     new_status = st.checkbox("Listened ✔️" if current_status else "Listened 🎧", 
                                              value=current_status, 
-                                             key=f"h_listened_{spotify_id}_{index}")
+                                             key=f"h_listened_{row.get('Spotify ID', '')}_{index}")
                 
                 with action_col2:
-                    if st.button("Remove 🗑️", key=f"del_h_{spotify_id}_{index}"):
+                    if st.button("Remove 🗑️", key=f"del_h_{row.get('Spotify ID', '')}_{index}"):
                         df = df.drop(index)
                         conn.update(worksheet="Sheet1", data=df)
                         st.cache_data.clear()
                         st.rerun()
-                
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # Check for listened status update
                 if new_status != current_status:
                     df.at[index, "Listened"] = new_status
                     conn.update(worksheet="Sheet1", data=df)
@@ -336,52 +366,32 @@ if not df.empty:
             st.info("Alyssa's vault is empty!")
         else:
             for index, row in df_alyssa.iterrows():
-                title = row.get("Title", "Unknown")
-                artist = row.get("Artist", "Unknown")
-                spotify_id = row.get("Spotify ID", "")
-                spotify_url = row.get("Spotify URL", "")
-                apple_url = row.get("Apple URL", "")
-                current_status = row.get("Listened", False)
+                render_song_card(
+                    row.get("Title", "Unknown"), 
+                    row.get("Artist", "Unknown"), 
+                    row.get("Spotify ID", ""), 
+                    row.get("Spotify URL", ""), 
+                    row.get("Apple URL", ""), 
+                    row.get("Listened", False)
+                )
                 
-                card_html = f"""<div class="gallery-card" style="opacity: {'0.6' if current_status else '1.0'};">
-<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
-<p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
-                
-                if pd.notna(spotify_id) and spotify_id != "":
-                    card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
-                
-                if pd.notna(apple_url) and apple_url != "":
-                    apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
-                    card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
-                
-                card_html += '<div class="link-container">'
-                if pd.notna(apple_url) and apple_url != "":
-                    card_html += f'<a href="{apple_url}" target="_blank" class="apple-link">Apple 🍎</a>'
-                if pd.notna(spotify_url) and spotify_url != "":
-                    card_html += f'<a href="{spotify_url}" target="_blank" class="spotify-link">Spotify 🟢</a>'
-                card_html += '</div></div>'
-                
-                st.markdown(card_html, unsafe_allow_html=True)
-                
-                # --- NEW: Action Bar (Checkbox + Delete Button) ---
                 st.markdown('<div class="action-container">', unsafe_allow_html=True)
                 action_col1, action_col2 = st.columns(2)
                 
                 with action_col1:
+                    current_status = row.get("Listened", False)
                     new_status = st.checkbox("Listened ✔️" if current_status else "Listened 🎧", 
                                              value=current_status, 
-                                             key=f"a_listened_{spotify_id}_{index}")
+                                             key=f"a_listened_{row.get('Spotify ID', '')}_{index}")
                 
                 with action_col2:
-                    if st.button("Remove 🗑️", key=f"del_a_{spotify_id}_{index}"):
+                    if st.button("Remove 🗑️", key=f"del_a_{row.get('Spotify ID', '')}_{index}"):
                         df = df.drop(index)
                         conn.update(worksheet="Sheet1", data=df)
                         st.cache_data.clear()
                         st.rerun()
-                
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # Check for listened status update
                 if new_status != current_status:
                     df.at[index, "Listened"] = new_status
                     conn.update(worksheet="Sheet1", data=df)
