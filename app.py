@@ -233,7 +233,9 @@ for col in expected_columns:
     if col not in df.columns:
         df[col] = ""
 
-# THE FIX: Force these columns to accept text instead of defaulting to numbers (float64)
+# THE FIX: Force correct data types for these columns
+df["Listened"] = df["Listened"].fillna(False).astype(bool)
+df["Rating"] = df["Rating"].fillna("").astype(str)
 df["Review"] = df["Review"].fillna("").astype(str)
 df["Reviewer"] = df["Reviewer"].fillna("").astype(str)
 
