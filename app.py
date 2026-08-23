@@ -356,7 +356,7 @@ if page_selection == "The Vault 🎧":
                                 if user_review.strip() == "":
                                     st.error("Please write a quick review!")
                                 else:
-                                    df.at[index, "Rating"] = user_rating
+                                    df.at[index, "Rating"] = str(user_rating)  # Convert int to string here!
                                     df.at[index, "Review"] = user_review
                                     df.at[index, "Reviewer"] = reviewer_name
                                     df.at[index, "Listened"] = True
@@ -390,7 +390,7 @@ if page_selection == "The Vault 🎧":
                                 if user_review.strip() == "":
                                     st.error("Please write a quick review!")
                                 else:
-                                    df.at[index, "Rating"] = user_rating
+                                    df.at[index, "Rating"] = str(user_rating)
                                     df.at[index, "Review"] = user_review
                                     df.at[index, "Reviewer"] = reviewer_name
                                     df.at[index, "Listened"] = True
