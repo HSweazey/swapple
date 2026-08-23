@@ -233,8 +233,9 @@ for col in expected_columns:
     if col not in df.columns:
         df[col] = ""
 
-# Clean up empty values to make filtering easier
-df["Review"] = df["Review"].fillna("")
+# THE FIX: Force these columns to accept text instead of defaulting to numbers (float64)
+df["Review"] = df["Review"].fillna("").astype(str)
+df["Reviewer"] = df["Reviewer"].fillna("").astype(str)
 
 # Ensure reset index for exact row updates
 df = df.reset_index(drop=True)
