@@ -186,7 +186,7 @@ def fetch_song_data(song_title: str, artist: str) -> dict | None:
         "Spotify URL": spotify_data["spotify_url"] if spotify_data else "",
         "Apple URL": apple_data["apple_url"] if apple_data else "",
         "Album Art": spotify_data["album_art"] if spotify_data else apple_data["album_art"],
-        "Date Added": datetime.now().strftime("%Y-%m-%d %H:%M")
+        "Date Added": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
 def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=None, review_text=None, reviewer=None):
@@ -202,7 +202,12 @@ def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=N
         card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
     
     if pd.notna(review_text) and str(review_text).strip() != "":
-        stars = "⭐" * int(float(rating)) if pd.notna(rating) and str(rating).isdigit() else "⭐"
+        try:
+            star_count = int(float(rating))
+            stars = "⭐" * star_count
+        except (ValueError, TypeError):
+            stars = "⭐" # Fallback if something weird happens to the data
+            
         rev_name = reviewer if pd.notna(reviewer) else "Unknown"
         card_html += f"""
         <div class="review-box">
@@ -225,7 +230,7 @@ def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=N
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="Sheet1", ttl="10m")
 
-expected_columns = ["Title", "Artist", "Spotify ID", "Spotify URL", "Apple URL", "Album Art", "Date Added", "Playlist", "Listened", "Rating", "Review", "Reviewer"]
+expected_columns = ["Title", "Artist", "Spotify ID", "Spotify URL", "Apple URL", "Album Art", "Date Added", "Playlist", "Listened", "Rating", "Review", "Reviewer", "Date Reviewed"]
 if df.empty or len(df.columns) == 0:
     df = pd.DataFrame(columns=expected_columns)
 for col in expected_columns:
@@ -236,6 +241,7 @@ df["Listened"] = df["Listened"].fillna(False).astype(bool)
 df["Rating"] = df["Rating"].fillna("").astype(str)
 df["Review"] = df["Review"].fillna("").astype(str)
 df["Reviewer"] = df["Reviewer"].fillna("").astype(str)
+df["Date Reviewed"] = df["Date Reviewed"].fillna("").astype(str)
 df = df.reset_index(drop=True)
 
 # --- MAIN APP UI ---
@@ -292,6 +298,7 @@ with st.container():
                         new_song["Rating"] = ""
                         new_song["Review"] = ""
                         new_song["Reviewer"] = ""
+                        new_song["Date Reviewed"] = ""
                         
                         if not df.empty and new_song["Spotify ID"] in df["Spotify ID"].values and new_song["Spotify ID"] != "":
                             st.warning(f"You already have '{new_song['Title']}' in the vault!")
@@ -352,6 +359,7 @@ with tab_hannah:
                             df.at[index, "Review"] = user_review
                             df.at[index, "Reviewer"] = reviewer_name
                             df.at[index, "Listened"] = True
+                            df.at[index, "Date Reviewed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             conn.update(worksheet="Sheet1", data=df)
                             st.cache_data.clear()
                             st.rerun()
@@ -387,6 +395,7 @@ with tab_alyssa:
                             df.at[index, "Review"] = user_review
                             df.at[index, "Reviewer"] = reviewer_name
                             df.at[index, "Listened"] = True
+                            df.at[index, "Date Reviewed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             conn.update(worksheet="Sheet1", data=df)
                             st.cache_data.clear()
                             st.rerun()
@@ -403,9 +412,11 @@ with tab_archive:
     if reviewed_df.empty:
         st.info("No reviews yet! Go to Hannah's or Alyssa's list and review a song.")
     else:
-        reviewed_df = reviewed_df.sort_index(ascending=False)
+        # Sort so newest reviews are at the top. 
+        # (Fallback to Date Added if it's an old song without a Date Reviewed stamp)
+        reviewed_df["Sort_Date"] = reviewed_df["Date Reviewed"].replace("", pd.NA).fillna(reviewed_df["Date Added"])
+        reviewed_df = reviewed_df.sort_values(by="Sort_Date", ascending=False)
         
-        # Sub-tabs inside the archive for filtering by reviewer
         tab_h_rev, tab_a_rev = st.tabs(["🌸 Hannah's Reviews", "🎧 Alyssa's Reviews"])
         
         with tab_h_rev:
