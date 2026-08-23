@@ -86,7 +86,7 @@ st.markdown("""
     .spotify-link { background-color: #E8F5E9; color: #1DB954; }
     .spotify-link:hover { background-color: #1DB954; color: white; }
     button[data-baseweb="tab"] {
-        font-size: 16px !important;
+        font-size: 15px !important;
         font-weight: bold !important;
     }
     .action-container { margin-bottom: 30px; }
@@ -238,13 +238,12 @@ df["Review"] = df["Review"].fillna("").astype(str)
 df["Reviewer"] = df["Reviewer"].fillna("").astype(str)
 df = df.reset_index(drop=True)
 
-# --- SIDEBAR NAVIGATION ---
-st.sidebar.title("🌸 Swapple Nav")
-page_selection = st.sidebar.radio("Go to:", ["The Vault 🎧", "Reviews Archive 📖"])
-st.sidebar.divider()
+# --- MAIN APP UI ---
+st.title("🌸 Our Music Hub 🌸")
 
-if page_selection == "The Vault 🎧":
-    st.title("Drop a new rec! 🎧")
+# --- INPUT SECTION ---
+with st.container():
+    st.write("### Drop a new rec! 🎧")
     
     input_tab1, input_tab2 = st.tabs(["📝 Type it out", "🔗 Paste a link"])
     
@@ -316,102 +315,100 @@ if page_selection == "The Vault 🎧":
                 else:
                     st.error("Couldn't find that exact song. Check the spelling and try again!")
 
-    st.divider()
+st.divider()
 
-    st.write("### The Vault 💖")
-    unreviewed_df = df[df["Review"] == ""]
+# --- MAIN 3-TAB LAYOUT (Hannah's List, Alyssa's List, Reviews Archive) ---
+st.write("### The Vault & Archive 💖")
 
-    if unreviewed_df.empty:
-        st.info("The vault is empty! Add your first track above. 🎶")
+unreviewed_df = df[df["Review"] == ""]
+reviewed_df = df[df["Review"] != ""]
+
+df_hannah = unreviewed_df[unreviewed_df["Playlist"] == "Hannah"]
+df_alyssa = unreviewed_df[unreviewed_df["Playlist"] == "Alyssa"]
+
+tab_hannah, tab_alyssa, tab_archive = st.tabs(["🌸 Hannah's List", "🎧 Alyssa's List", "📖 Reviews Archive"])
+
+# --- TAB 1: HANNAH'S LIST ---
+with tab_hannah:
+    if df_hannah.empty:
+        st.info("Hannah's vault is empty!")
     else:
-        df_hannah = unreviewed_df[unreviewed_df["Playlist"] == "Hannah"]
-        df_alyssa = unreviewed_df[unreviewed_df["Playlist"] == "Alyssa"]
-        
-        tab_hannah, tab_alyssa = st.tabs(["🌸 Hannah's List", "🎧 Alyssa's List"])
-        
-        with tab_hannah:
-            if df_hannah.empty:
-                st.info("Hannah's vault is empty!")
-            else:
-                for index, row in df_hannah.iterrows():
-                    render_song_card(row.get("Title"), row.get("Artist"), row.get("Spotify ID"), row.get("Spotify URL"), row.get("Apple URL"))
-                    
-                    with st.expander("Rate & Review ✍️"):
-                        st.write(f"Did you listen to **{row.get('Title')}**?")
-                        reviewer_name = st.radio("Who is reviewing?", ["Hannah", "Alyssa"], key=f"h_who_{index}", horizontal=True)
-                        user_rating = st.slider("Rating", 1, 5, 5, key=f"h_rate_{index}")
-                        user_review = st.text_area("What did you think?", key=f"h_rev_{index}")
-                        
-                        colA, colB = st.columns(2)
-                        with colA:
-                            if st.button("Submit Review ✅", key=f"h_sub_{index}"):
-                                if user_review.strip() == "":
-                                    st.error("Please write a quick review!")
-                                else:
-                                    df.at[index, "Rating"] = str(user_rating)
-                                    df.at[index, "Review"] = user_review
-                                    df.at[index, "Reviewer"] = reviewer_name
-                                    df.at[index, "Listened"] = True
-                                    conn.update(worksheet="Sheet1", data=df)
-                                    st.cache_data.clear()
-                                    st.rerun()
-                        with colB:
-                            if st.button("Delete Song 🗑️", key=f"del_h_{index}"):
-                                df = df.drop(index)
-                                conn.update(worksheet="Sheet1", data=df)
-                                st.cache_data.clear()
-                                st.rerun()
-                    st.write("")
+        for index, row in df_hannah.iterrows():
+            render_song_card(row.get("Title"), row.get("Artist"), row.get("Spotify ID"), row.get("Spotify URL"), row.get("Apple URL"))
+            
+            with st.expander("Rate & Review ✍️"):
+                st.write(f"Did you listen to **{row.get('Title')}**?")
+                reviewer_name = st.radio("Who is reviewing?", ["Hannah", "Alyssa"], key=f"h_who_{index}", horizontal=True)
+                user_rating = st.slider("Rating", 1, 5, 5, key=f"h_rate_{index}")
+                user_review = st.text_area("What did you think?", key=f"h_rev_{index}")
+                
+                colA, colB = st.columns(2)
+                with colA:
+                    if st.button("Submit Review ✅", key=f"h_sub_{index}"):
+                        if user_review.strip() == "":
+                            st.error("Please write a quick review!")
+                        else:
+                            df.at[index, "Rating"] = str(user_rating)
+                            df.at[index, "Review"] = user_review
+                            df.at[index, "Reviewer"] = reviewer_name
+                            df.at[index, "Listened"] = True
+                            conn.update(worksheet="Sheet1", data=df)
+                            st.cache_data.clear()
+                            st.rerun()
+                with colB:
+                    if st.button("Delete Song 🗑️", key=f"del_h_{index}"):
+                        df = df.drop(index)
+                        conn.update(worksheet="Sheet1", data=df)
+                        st.cache_data.clear()
+                        st.rerun()
+            st.write("")
 
-        with tab_alyssa:
-            if df_alyssa.empty:
-                st.info("Alyssa's vault is empty!")
-            else:
-                for index, row in df_alyssa.iterrows():
-                    render_song_card(row.get("Title"), row.get("Artist"), row.get("Spotify ID"), row.get("Spotify URL"), row.get("Apple URL"))
-                    
-                    with st.expander("Rate & Review ✍️"):
-                        st.write(f"Did you listen to **{row.get('Title')}**?")
-                        reviewer_name = st.radio("Who is reviewing?", ["Hannah", "Alyssa"], key=f"a_who_{index}", horizontal=True)
-                        user_rating = st.slider("Rating", 1, 5, 5, key=f"a_rate_{index}")
-                        user_review = st.text_area("What did you think?", key=f"a_rev_{index}")
-                        
-                        colA, colB = st.columns(2)
-                        with colA:
-                            if st.button("Submit Review ✅", key=f"a_sub_{index}"):
-                                if user_review.strip() == "":
-                                    st.error("Please write a quick review!")
-                                else:
-                                    df.at[index, "Rating"] = str(user_rating)
-                                    df.at[index, "Review"] = user_review
-                                    df.at[index, "Reviewer"] = reviewer_name
-                                    df.at[index, "Listened"] = True
-                                    conn.update(worksheet="Sheet1", data=df)
-                                    st.cache_data.clear()
-                                    st.rerun()
-                        with colB:
-                            if st.button("Delete Song 🗑️", key=f"del_a_{index}"):
-                                df = df.drop(index)
-                                conn.update(worksheet="Sheet1", data=df)
-                                st.cache_data.clear()
-                                st.rerun()
-                    st.write("")
+# --- TAB 2: ALYSSA'S LIST ---
+with tab_alyssa:
+    if df_alyssa.empty:
+        st.info("Alyssa's vault is empty!")
+    else:
+        for index, row in df_alyssa.iterrows():
+            render_song_card(row.get("Title"), row.get("Artist"), row.get("Spotify ID"), row.get("Spotify URL"), row.get("Apple URL"))
+            
+            with st.expander("Rate & Review ✍️"):
+                st.write(f"Did you listen to **{row.get('Title')}**?")
+                reviewer_name = st.radio("Who is reviewing?", ["Hannah", "Alyssa"], key=f"a_who_{index}", horizontal=True)
+                user_rating = st.slider("Rating", 1, 5, 5, key=f"a_rate_{index}")
+                user_review = st.text_area("What did you think?", key=f"a_rev_{index}")
+                
+                colA, colB = st.columns(2)
+                with colA:
+                    if st.button("Submit Review ✅", key=f"a_sub_{index}"):
+                        if user_review.strip() == "":
+                            st.error("Please write a quick review!")
+                        else:
+                            df.at[index, "Rating"] = str(user_rating)
+                            df.at[index, "Review"] = user_review
+                            df.at[index, "Reviewer"] = reviewer_name
+                            df.at[index, "Listened"] = True
+                            conn.update(worksheet="Sheet1", data=df)
+                            st.cache_data.clear()
+                            st.rerun()
+                with colB:
+                    if st.button("Delete Song 🗑️", key=f"del_a_{index}"):
+                        df = df.drop(index)
+                        conn.update(worksheet="Sheet1", data=df)
+                        st.cache_data.clear()
+                        st.rerun()
+            st.write("")
 
-
-elif page_selection == "Reviews Archive 📖":
-    st.title("📖 Reviews Archive")
-    st.write("Tracks you've listened to and rated!")
-    st.divider()
-
-    reviewed_df = df[df["Review"] != ""]
-
+# --- TAB 3: REVIEWS ARCHIVE ---
+with tab_archive:
     if reviewed_df.empty:
-        st.info("No reviews yet! Go back to The Vault and review a song.")
+        st.info("No reviews yet! Go to Hannah's or Alyssa's list and review a song.")
     else:
         reviewed_df = reviewed_df.sort_index(ascending=False)
-        tab_hannah_rev, tab_alyssa_rev = st.tabs(["🌸 Hannah's Reviews", "🎧 Alyssa's Reviews"])
         
-        with tab_hannah_rev:
+        # Sub-tabs inside the archive for filtering by reviewer
+        tab_h_rev, tab_a_rev = st.tabs(["🌸 Hannah's Reviews", "🎧 Alyssa's Reviews"])
+        
+        with tab_h_rev:
             h_rev_df = reviewed_df[reviewed_df["Reviewer"] == "Hannah"]
             if h_rev_df.empty:
                 st.info("Hannah hasn't left any reviews yet!")
@@ -427,8 +424,9 @@ elif page_selection == "Reviews Archive 📖":
                         conn.update(worksheet="Sheet1", data=df)
                         st.cache_data.clear()
                         st.rerun()
+                    st.write("")
         
-        with tab_alyssa_rev:
+        with tab_a_rev:
             a_rev_df = reviewed_df[reviewed_df["Reviewer"] == "Alyssa"]
             if a_rev_df.empty:
                 st.info("Alyssa hasn't left any reviews yet!")
@@ -444,3 +442,4 @@ elif page_selection == "Reviews Archive 📖":
                         conn.update(worksheet="Sheet1", data=df)
                         st.cache_data.clear()
                         st.rerun()
+                    st.write("")
