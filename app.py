@@ -201,9 +201,8 @@ def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=N
         apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
         card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
     
-    # If the song has a review, inject the review UI box
     if pd.notna(review_text) and str(review_text).strip() != "":
-        stars = "⭐" * int(float(rating)) if pd.notna(rating) else ""
+        stars = "⭐" * int(float(rating)) if pd.notna(rating) and str(rating).isdigit() else "⭐"
         rev_name = reviewer if pd.notna(reviewer) else "Unknown"
         card_html += f"""
         <div class="review-box">
@@ -233,13 +232,10 @@ for col in expected_columns:
     if col not in df.columns:
         df[col] = ""
 
-# THE FIX: Force correct data types for these columns
 df["Listened"] = df["Listened"].fillna(False).astype(bool)
 df["Rating"] = df["Rating"].fillna("").astype(str)
 df["Review"] = df["Review"].fillna("").astype(str)
 df["Reviewer"] = df["Reviewer"].fillna("").astype(str)
-
-# Ensure reset index for exact row updates
 df = df.reset_index(drop=True)
 
 # --- SIDEBAR NAVIGATION ---
@@ -248,7 +244,6 @@ page_selection = st.sidebar.radio("Go to:", ["The Vault 🎧", "Reviews Archive 
 st.sidebar.divider()
 
 if page_selection == "The Vault 🎧":
-    # --- INPUT SECTION ---
     st.title("Drop a new rec! 🎧")
     
     input_tab1, input_tab2 = st.tabs(["📝 Type it out", "🔗 Paste a link"])
@@ -323,10 +318,7 @@ if page_selection == "The Vault 🎧":
 
     st.divider()
 
-    # --- UNREVIEWED VAULT GALLERY ---
     st.write("### The Vault 💖")
-
-    # Filter df to ONLY show songs with no review
     unreviewed_df = df[df["Review"] == ""]
 
     if unreviewed_df.empty:
@@ -356,7 +348,7 @@ if page_selection == "The Vault 🎧":
                                 if user_review.strip() == "":
                                     st.error("Please write a quick review!")
                                 else:
-                                    df.at[index, "Rating"] = str(user_rating)  # Convert int to string here!
+                                    df.at[index, "Rating"] = str(user_rating)
                                     df.at[index, "Review"] = user_review
                                     df.at[index, "Reviewer"] = reviewer_name
                                     df.at[index, "Listened"] = True
@@ -407,23 +399,18 @@ if page_selection == "The Vault 🎧":
 
 
 elif page_selection == "Reviews Archive 📖":
-    # --- ARCHIVE GALLERY ---
     st.title("📖 Reviews Archive")
     st.write("Tracks you've listened to and rated!")
     st.divider()
 
-    # Filter df to ONLY show songs with a review
     reviewed_df = df[df["Review"] != ""]
 
     if reviewed_df.empty:
         st.info("No reviews yet! Go back to The Vault and review a song.")
     else:
-        # Sort so newest reviews are at the top
         reviewed_df = reviewed_df.sort_index(ascending=False)
-        
         tab_hannah_rev, tab_alyssa_rev = st.tabs(["🌸 Hannah's Reviews", "🎧 Alyssa's Reviews"])
         
-        # Hannah's Reviews
         with tab_hannah_rev:
             h_rev_df = reviewed_df[reviewed_df["Reviewer"] == "Hannah"]
             if h_rev_df.empty:
@@ -441,7 +428,6 @@ elif page_selection == "Reviews Archive 📖":
                         st.cache_data.clear()
                         st.rerun()
         
-        # Alyssa's Reviews
         with tab_alyssa_rev:
             a_rev_df = reviewed_df[reviewed_df["Reviewer"] == "Alyssa"]
             if a_rev_df.empty:
