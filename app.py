@@ -67,6 +67,14 @@ st.markdown("""
         margin-top: 15px;
         text-align: left;
     }
+    .note-box {
+        background-color: #FFF0F5;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 12px;
+        text-align: left;
+        border-left: 4px solid #FFB6C1;
+    }
     .link-container {
         display: flex;
         justify-content: center;
@@ -189,10 +197,18 @@ def fetch_song_data(song_title: str, artist: str) -> dict | None:
         "Date Added": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
-def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=None, review_text=None, reviewer=None):
+def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=None, review_text=None, reviewer=None, note=None):
     card_html = f"""<div class="gallery-card">
 <h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
 <p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
+
+    # Inject the Add/Edit Note right below the title/artist
+    if pd.notna(note) and str(note).strip() != "":
+        card_html += f"""
+        <div class="note-box">
+            <p style="margin: 0; font-size: 13px; color: #d63384;"><strong>💭 Note:</strong> {note}</p>
+        </div>
+        """
     
     if pd.notna(spotify_id) and spotify_id != "":
         card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
@@ -206,7 +222,7 @@ def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=N
             star_count = int(float(rating))
             stars = "⭐" * star_count
         except (ValueError, TypeError):
-            stars = "⭐" # Fallback if something weird happens to the data
+            stars = "⭐" 
             
         rev_name = reviewer if pd.notna(reviewer) else "Unknown"
         card_html += f"""
@@ -230,7 +246,7 @@ def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=N
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="Sheet1", ttl="10m")
 
-expected_columns = ["Title", "Artist", "Spotify ID", "Spotify URL", "Apple URL", "Album Art", "Date Added", "Playlist", "Listened", "Rating", "Review", "Reviewer", "Date Reviewed"]
+expected_columns = ["Title", "Artist", "Spotify ID", "Spotify URL", "Apple URL", "Album Art", "Date Added", "Playlist", "Listened", "Rating", "Review", "Reviewer", "Date Reviewed", "Note"]
 if df.empty or len(df.columns) == 0:
     df = pd.DataFrame(columns=expected_columns)
 for col in expected_columns:
@@ -242,6 +258,7 @@ df["Rating"] = df["Rating"].fillna("").astype(str)
 df["Review"] = df["Review"].fillna("").astype(str)
 df["Reviewer"] = df["Reviewer"].fillna("").astype(str)
 df["Date Reviewed"] = df["Date Reviewed"].fillna("").astype(str)
+df["Note"] = df["Note"].fillna("").astype(str)
 df = df.reset_index(drop=True)
 
 # --- MAIN APP UI ---
@@ -263,6 +280,7 @@ with st.container():
     with input_tab2:
         link_input = st.text_input("Spotify or Apple Music Link", placeholder="https://open.spotify.com/track/...")
         
+    note_input = st.text_input("Add a note (optional) 💭", placeholder="e.g. The bridge on this song is insane!")
     playlist_selection = st.radio("Whose playlist is this for?", ["Hannah", "Alyssa"], horizontal=True)
     
     btn_col1, btn_col2 = st.columns(2)
@@ -299,6 +317,7 @@ with st.container():
                         new_song["Review"] = ""
                         new_song["Reviewer"] = ""
                         new_song["Date Reviewed"] = ""
+                        new_song["Note"] = note_input
                         
                         if not df.empty and new_song["Spotify ID"] in df["Spotify ID"].values and new_song["Spotify ID"] != "":
                             st.warning(f"You already have '{new_song['Title']}' in the vault!")
@@ -317,7 +336,8 @@ with st.container():
                             new_song["Artist"], 
                             new_song["Spotify ID"], 
                             new_song["Spotify URL"], 
-                            new_song["Apple URL"]
+                            new_song["Apple URL"],
+                            note=note_input
                         )
                 else:
                     st.error("Couldn't find that exact song. Check the spelling and try again!")
@@ -341,9 +361,20 @@ with tab_hannah:
         st.info("Hannah's vault is empty!")
     else:
         for index, row in df_hannah.iterrows():
-            render_song_card(row.get("Title"), row.get("Artist"), row.get("Spotify ID"), row.get("Spotify URL"), row.get("Apple URL"))
+            render_song_card(
+                row.get("Title"), row.get("Artist"), row.get("Spotify ID"), 
+                row.get("Spotify URL"), row.get("Apple URL"), note=row.get("Note", "")
+            )
             
-            with st.expander("Rate & Review ✍️"):
+            with st.expander("💭 Add/Edit Note"):
+                new_note = st.text_input("Update your note:", value=row.get("Note", ""), key=f"h_note_{index}")
+                if st.button("Save Note 💾", key=f"h_save_note_{index}"):
+                    df.at[index, "Note"] = new_note
+                    conn.update(worksheet="Sheet1", data=df)
+                    st.cache_data.clear()
+                    st.rerun()
+
+            with st.expander("✍️ Rate & Review"):
                 st.write(f"Did you listen to **{row.get('Title')}**?")
                 reviewer_name = st.radio("Who is reviewing?", ["Hannah", "Alyssa"], key=f"h_who_{index}", horizontal=True)
                 user_rating = st.slider("Rating", 1, 5, 5, key=f"h_rate_{index}")
@@ -377,9 +408,20 @@ with tab_alyssa:
         st.info("Alyssa's vault is empty!")
     else:
         for index, row in df_alyssa.iterrows():
-            render_song_card(row.get("Title"), row.get("Artist"), row.get("Spotify ID"), row.get("Spotify URL"), row.get("Apple URL"))
+            render_song_card(
+                row.get("Title"), row.get("Artist"), row.get("Spotify ID"), 
+                row.get("Spotify URL"), row.get("Apple URL"), note=row.get("Note", "")
+            )
             
-            with st.expander("Rate & Review ✍️"):
+            with st.expander("💭 Add/Edit Note"):
+                new_note = st.text_input("Update your note:", value=row.get("Note", ""), key=f"a_note_{index}")
+                if st.button("Save Note 💾", key=f"a_save_note_{index}"):
+                    df.at[index, "Note"] = new_note
+                    conn.update(worksheet="Sheet1", data=df)
+                    st.cache_data.clear()
+                    st.rerun()
+
+            with st.expander("✍️ Rate & Review"):
                 st.write(f"Did you listen to **{row.get('Title')}**?")
                 reviewer_name = st.radio("Who is reviewing?", ["Hannah", "Alyssa"], key=f"a_who_{index}", horizontal=True)
                 user_rating = st.slider("Rating", 1, 5, 5, key=f"a_rate_{index}")
@@ -412,8 +454,6 @@ with tab_archive:
     if reviewed_df.empty:
         st.info("No reviews yet! Go to Hannah's or Alyssa's list and review a song.")
     else:
-        # Sort so newest reviews are at the top. 
-        # (Fallback to Date Added if it's an old song without a Date Reviewed stamp)
         reviewed_df["Sort_Date"] = reviewed_df["Date Reviewed"].replace("", pd.NA).fillna(reviewed_df["Date Added"])
         reviewed_df = reviewed_df.sort_values(by="Sort_Date", ascending=False)
         
@@ -428,7 +468,7 @@ with tab_archive:
                     render_song_card(
                         row.get("Title"), row.get("Artist"), row.get("Spotify ID"), 
                         row.get("Spotify URL"), row.get("Apple URL"), 
-                        row.get("Rating"), row.get("Review"), row.get("Reviewer")
+                        row.get("Rating"), row.get("Review"), row.get("Reviewer"), row.get("Note", "")
                     )
                     if st.button("Delete Record 🗑️", key=f"del_hrev_{index}"):
                         df = df.drop(index)
@@ -446,7 +486,7 @@ with tab_archive:
                     render_song_card(
                         row.get("Title"), row.get("Artist"), row.get("Spotify ID"), 
                         row.get("Spotify URL"), row.get("Apple URL"), 
-                        row.get("Rating"), row.get("Review"), row.get("Reviewer")
+                        row.get("Rating"), row.get("Review"), row.get("Reviewer"), row.get("Note", "")
                     )
                     if st.button("Delete Record 🗑️", key=f"del_arev_{index}"):
                         df = df.drop(index)
