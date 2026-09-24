@@ -202,7 +202,6 @@ def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=N
 <h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
 <p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
 
-    # Inject the Add/Edit Note right below the title/artist
     if pd.notna(note) and str(note).strip() != "":
         card_html += f"""
         <div class="note-box">
@@ -470,11 +469,38 @@ with tab_archive:
                         row.get("Spotify URL"), row.get("Apple URL"), 
                         row.get("Rating"), row.get("Review"), row.get("Reviewer"), row.get("Note", "")
                     )
-                    if st.button("Delete Record 🗑️", key=f"del_hrev_{index}"):
-                        df = df.drop(index)
-                        conn.update(worksheet="Sheet1", data=df)
-                        st.cache_data.clear()
-                        st.rerun()
+                    
+                    with st.expander("✏️ Edit Review"):
+                        curr_rev_name = row.get("Reviewer", "Hannah")
+                        rev_idx = 0 if curr_rev_name == "Hannah" else 1
+                        
+                        try:
+                            curr_rate = int(float(row.get("Rating", 5)))
+                        except:
+                            curr_rate = 5
+                            
+                        new_rev_name = st.radio("Who is reviewing?", ["Hannah", "Alyssa"], index=rev_idx, key=f"edit_who_h_{index}", horizontal=True)
+                        new_rate = st.slider("Rating", 1, 5, curr_rate, key=f"edit_rate_h_{index}")
+                        new_rev_text = st.text_area("What did you think?", value=row.get("Review", ""), key=f"edit_text_h_{index}")
+                        
+                        colA, colB = st.columns(2)
+                        with colA:
+                            if st.button("Save Changes ✅", key=f"edit_save_h_{index}"):
+                                if new_rev_text.strip() == "":
+                                    st.error("Please write a quick review!")
+                                else:
+                                    df.at[index, "Reviewer"] = new_rev_name
+                                    df.at[index, "Rating"] = str(new_rate)
+                                    df.at[index, "Review"] = new_rev_text
+                                    conn.update(worksheet="Sheet1", data=df)
+                                    st.cache_data.clear()
+                                    st.rerun()
+                        with colB:
+                            if st.button("Delete Record 🗑️", key=f"del_hrev_{index}"):
+                                df = df.drop(index)
+                                conn.update(worksheet="Sheet1", data=df)
+                                st.cache_data.clear()
+                                st.rerun()
                     st.write("")
         
         with tab_a_rev:
@@ -488,9 +514,36 @@ with tab_archive:
                         row.get("Spotify URL"), row.get("Apple URL"), 
                         row.get("Rating"), row.get("Review"), row.get("Reviewer"), row.get("Note", "")
                     )
-                    if st.button("Delete Record 🗑️", key=f"del_arev_{index}"):
-                        df = df.drop(index)
-                        conn.update(worksheet="Sheet1", data=df)
-                        st.cache_data.clear()
-                        st.rerun()
+                    
+                    with st.expander("✏️ Edit Review"):
+                        curr_rev_name = row.get("Reviewer", "Alyssa")
+                        rev_idx = 0 if curr_rev_name == "Hannah" else 1
+                        
+                        try:
+                            curr_rate = int(float(row.get("Rating", 5)))
+                        except:
+                            curr_rate = 5
+                            
+                        new_rev_name = st.radio("Who is reviewing?", ["Hannah", "Alyssa"], index=rev_idx, key=f"edit_who_a_{index}", horizontal=True)
+                        new_rate = st.slider("Rating", 1, 5, curr_rate, key=f"edit_rate_a_{index}")
+                        new_rev_text = st.text_area("What did you think?", value=row.get("Review", ""), key=f"edit_text_a_{index}")
+                        
+                        colA, colB = st.columns(2)
+                        with colA:
+                            if st.button("Save Changes ✅", key=f"edit_save_a_{index}"):
+                                if new_rev_text.strip() == "":
+                                    st.error("Please write a quick review!")
+                                else:
+                                    df.at[index, "Reviewer"] = new_rev_name
+                                    df.at[index, "Rating"] = str(new_rate)
+                                    df.at[index, "Review"] = new_rev_text
+                                    conn.update(worksheet="Sheet1", data=df)
+                                    st.cache_data.clear()
+                                    st.rerun()
+                        with colB:
+                            if st.button("Delete Record 🗑️", key=f"del_arev_{index}"):
+                                df = df.drop(index)
+                                conn.update(worksheet="Sheet1", data=df)
+                                st.cache_data.clear()
+                                st.rerun()
                     st.write("")
