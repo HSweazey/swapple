@@ -156,13 +156,22 @@ def get_spotify_track_info(song_title: str, artist: str) -> dict | None:
 
 
 def apple_track_from_link(link: str) -> dict | None:
+    # Apple uses both album links with ?i=<track id> and direct /song/.../<id>
+    # links, so accept either form.
     match = re.search(r"[?&]i=(\d+)", link)
     if not match:
+        track_match = re.search(r"[?&]i=(\d+)", link)
+    if not track_match:
+        track_match = re.search(r"/song/(?:[^/?#]+/)*(\d+)(?:[?#]|$)", link)
+    if not track_match:
         return None
+    storefront_match = re.search(r"music\.apple\.com/([a-z]{2})/", link, re.IGNORECASE)
+    storefront = storefront_match.group(1).lower() if storefront_match else APPLE_STOREFRONT
     try:
         response = requests.get(
             "https://itunes.apple.com/lookup",
             params={"id": match.group(1), "country": APPLE_STOREFRONT},
+            params={"id": track_match.group(1), "country": storefront},
             timeout=5,
         )
         response.raise_for_status()
