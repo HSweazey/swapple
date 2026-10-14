@@ -251,23 +251,38 @@ def score_apple_candidate(spotify_data: dict, apple_data: dict) -> dict:
 
 def find_apple_candidates(spotify_data: dict) -> list[dict]:
     try:
-        response = requests.get(
-            "https://itunes.apple.com/search",
-            params={
-                "term": f"{spotify_data['title']} {spotify_data['artist']}",
-                "country": APPLE_STOREFRONT,
-                "media": "music",
-                "entity": "song",
-                "limit": 10,
-            },
-            timeout=5,
-        )
-        response.raise_for_status()
-        candidates = [
-            score_apple_candidate(spotify_data, apple_result_data(track))
-            for track in response.json().get("results", [])
-            if track.get("trackViewUrl")
-        ]
+        # iTunes occasionally ignores part of a multi-word search. Searching by
+        # title as well as title + artist makes the fallback more resilient.
+        raw_results = []
+        for term in (f"{spotify_data['title']} {spotify_data['artist']}", spotify_data["title"]):
+            response = requests.get(
+                "https://itunes.apple.com/search",
+                params={
+                    "term": term,
+                    "country": APPLE_STOREFRONT,
+                    "media": "music",
+                    "entity": "song",
+                    "limit": 10,
+                },
+                timeout=5,
+            )
+            response.raise_for_status()
+            raw_results.extend(response.json().get("results", []))
+
+        seen_ids = set()
+        candidates = []
+        for track in raw_results:
+            apple_data = apple_result_data(track)
+            apple_id = apple_data["apple_id"]
+            if not apple_data["apple_url"] or not apple_id or apple_id in seen_ids:
+                continue
+            seen_ids.add(apple_id)
+            candidate = score_apple_candidate(spotify_data, apple_data)
+            # Never offer unrelated results just because iTunes returned them.
+            # Artist names may vary because of featured performers, but the title
+            # itself needs to be a strong match.
+            if candidate["title_match"] >= 0.75 and candidate["artist_match"] >= 0.35:
+                candidates.append(candidate)
         return sorted(candidates, key=lambda candidate: candidate["score"], reverse=True)
     except requests.RequestException:
         return []
