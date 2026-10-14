@@ -127,6 +127,7 @@ def spotify_track_data(track: dict) -> dict:
         "artist": track["artists"][0]["name"],
         "duration_ms": track.get("duration_ms"),
         "isrc": track.get("external_ids", {}).get("isrc"),
+        "album_id": track.get("album", {}).get("id"),
         "album_art": images[0]["url"] if images else None,
     }
 
@@ -249,11 +250,45 @@ def score_apple_candidate(spotify_data: dict, apple_data: dict) -> dict:
     return apple_data
 
 
+def get_spotify_album_upc(spotify_data: dict) -> str | None:
+    """Get the album's UPC, a useful cross-store identifier without Apple auth."""
+    album_id = spotify_data.get("album_id")
+    if not album_id:
+        return None
+    try:
+        album = spotify_client().album(album_id)
+        return album.get("external_ids", {}).get("upc")
+    except Exception:
+        return None
+
+
+def itunes_lookup_by_upc(upc: str) -> list[dict]:
+    try:
+        response = requests.get(
+            "https://itunes.apple.com/lookup",
+            params={"upc": upc, "country": APPLE_STOREFRONT, "entity": "song"},
+            timeout=5,
+        )
+        response.raise_for_status()
+        # The first result describes the album; the remaining song results are
+        # candidates for the Spotify recording.
+        return [
+            track for track in response.json().get("results", [])
+            if track.get("kind") == "song"
+        ]
+    except requests.RequestException:
+        return []
+
+
 def find_apple_candidates(spotify_data: dict) -> list[dict]:
     try:
-        # iTunes occasionally ignores part of a multi-word search. Searching by
-        # title as well as title + artist makes the fallback more resilient.
         raw_results = []
+        upc = get_spotify_album_upc(spotify_data)
+        if upc:
+            raw_results.extend(itunes_lookup_by_upc(upc))
+
+        # UPC is the preferred path. Text search remains a fallback for albums
+        # that do not share a UPC across Spotify and the iTunes Store.
         for term in (f"{spotify_data['title']} {spotify_data['artist']}", spotify_data["title"]):
             response = requests.get(
                 "https://itunes.apple.com/search",
