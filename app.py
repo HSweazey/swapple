@@ -155,66 +155,39 @@ def get_spotify_track_info(song_title: str, artist: str) -> dict | None:
     except Exception:
         return None
 
-def get_apple_music_info(song_title: str, artist: str, isrc: str = None) -> dict | None:
-    endpoint = "https://itunes.apple.com/search"
-    clean_title = re.split(r' - | \(| \[', song_title)[0].strip()
+def get_apple_link_from_odesli(spotify_url: str) -> str | None:
+    endpoint = "https://api.song.link/v1-alpha.1/links"
+    params = {"url": spotify_url}
     
-    # We will rely on text search since iTunes Search API doesn't handle ISRC barcodes well
-    queries = [f"{clean_title} {artist}", f"{song_title} {artist}", clean_title]
-    
-    for q in queries:
-        # Ask for the top 3 results instead of 1, so we have backups if the first is wrong
-        params = {"term": q, "media": "music", "entity": "song", "limit": 3} 
-        try:
-            response = requests.get(endpoint, params=params, timeout=5)
-            response.raise_for_status()
-            data = response.json()
-            results = data.get("results", [])
-            
-            # --- POST-SEARCH VERIFICATION LOOP ---
-            for track in results:
-                found_title = track.get("trackName", "").lower()
-                found_artist = track.get("artistName", "").lower()
-                
-                expected_artist = artist.lower().strip()
-                expected_title = clean_title.lower().strip()
-                
-                # SANITY CHECK: Does our artist exist in the returned artist string? 
-                # (e.g., "mau p" inside "mau p" or "lady gaga" inside "lady gaga & bruno mars")
-                artist_match = (expected_artist in found_artist) or (found_artist in expected_artist)
-                title_match = (expected_title in found_title) or (found_title in expected_title)
-                
-                if artist_match and title_match:
-                    artwork_url = track.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
-                    return {
-                        "apple_url": track.get("trackViewUrl"),
-                        "title": track.get("trackName"),
-                        "artist": track.get("artistName"),
-                        "album_art": artwork_url
-                    }
-            # If we loop through all 3 results and none match, it moves to the next query variation
-        except Exception:
-            continue
-            
-    return None
+    try:
+        response = requests.get(endpoint, params=params, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Dig into the JSON response to grab just the Apple Music URL
+        apple_music_data = data.get("linksByPlatform", {}).get("appleMusic", {})
+        return apple_music_data.get("url")
+        
+    except Exception:
+        return None
 
 def fetch_song_data(song_title: str, artist: str) -> dict | None:
+    # 1. Get the Spotify data first (which is already working great)
     spotify_data = get_spotify_track_info(song_title, artist)
     
-    # NEW: Pass the ISRC to Apple Music if we found one on Spotify
-    isrc = spotify_data.get("isrc") if spotify_data else None
-    apple_data = get_apple_music_info(song_title, artist, isrc)
-    
-    if not spotify_data and not apple_data:
-        return None
+    if not spotify_data:
+        return None # If it's not on Spotify, we stop here
         
+    # 2. Feed the verified Spotify URL to Odesli to get the Apple link
+    apple_url = get_apple_link_from_odesli(spotify_data["spotify_url"])
+    
     return {
-        "Title": spotify_data["title"] if spotify_data else apple_data["title"],
-        "Artist": spotify_data["artist"] if spotify_data else apple_data["artist"],
-        "Spotify ID": spotify_data["spotify_id"] if spotify_data else "",
-        "Spotify URL": spotify_data["spotify_url"] if spotify_data else "",
-        "Apple URL": apple_data["apple_url"] if apple_data else "",
-        "Album Art": spotify_data["album_art"] if spotify_data else apple_data["album_art"],
+        "Title": spotify_data["title"],
+        "Artist": spotify_data["artist"],
+        "Spotify ID": spotify_data["spotify_id"],
+        "Spotify URL": spotify_data["spotify_url"],
+        "Apple URL": apple_url if apple_url else "",
+        "Album Art": spotify_data["album_art"],
         "Date Added": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
