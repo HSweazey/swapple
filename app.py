@@ -159,34 +159,44 @@ def get_apple_music_info(song_title: str, artist: str, isrc: str = None) -> dict
     endpoint = "https://itunes.apple.com/search"
     clean_title = re.split(r' - | \(| \[', song_title)[0].strip()
     
-    # NEW: Build a list of queries prioritized from most exact (ISRC) to least exact
-    queries = []
-    if isrc:
-        queries.append(isrc) # Try the exact barcode first!
-        
-    queries.extend([f"{song_title} {artist}", f"{clean_title} {artist}"])
+    # We will rely on text search since iTunes Search API doesn't handle ISRC barcodes well
+    queries = [f"{clean_title} {artist}", f"{song_title} {artist}", clean_title]
     
     for q in queries:
-        params = {"term": q, "media": "music", "entity": "song", "limit": 1}
+        # Ask for the top 3 results instead of 1, so we have backups if the first is wrong
+        params = {"term": q, "media": "music", "entity": "song", "limit": 3} 
         try:
             response = requests.get(endpoint, params=params, timeout=5)
             response.raise_for_status()
             data = response.json()
             results = data.get("results", [])
             
-            if results:
-                track = results[0]
-                artwork_url = track.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
-                return {
-                    "apple_url": track.get("trackViewUrl"),
-                    "title": track.get("trackName"),
-                    "artist": track.get("artistName"),
-                    "album_art": artwork_url
-                }
+            # --- POST-SEARCH VERIFICATION LOOP ---
+            for track in results:
+                found_title = track.get("trackName", "").lower()
+                found_artist = track.get("artistName", "").lower()
+                
+                expected_artist = artist.lower().strip()
+                expected_title = clean_title.lower().strip()
+                
+                # SANITY CHECK: Does our artist exist in the returned artist string? 
+                # (e.g., "mau p" inside "mau p" or "lady gaga" inside "lady gaga & bruno mars")
+                artist_match = (expected_artist in found_artist) or (found_artist in expected_artist)
+                title_match = (expected_title in found_title) or (found_title in expected_title)
+                
+                if artist_match and title_match:
+                    artwork_url = track.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
+                    return {
+                        "apple_url": track.get("trackViewUrl"),
+                        "title": track.get("trackName"),
+                        "artist": track.get("artistName"),
+                        "album_art": artwork_url
+                    }
+            # If we loop through all 3 results and none match, it moves to the next query variation
         except Exception:
             continue
             
-    return None 
+    return None
 
 def fetch_song_data(song_title: str, artist: str) -> dict | None:
     spotify_data = get_spotify_track_info(song_title, artist)
