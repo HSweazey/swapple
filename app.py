@@ -149,15 +149,22 @@ def get_spotify_track_info(song_title: str, artist: str) -> dict | None:
             "spotify_url": track["external_urls"]["spotify"],
             "title": track["name"],
             "artist": track["artists"][0]["name"],
-            "album_art": track["album"]["images"][0]["url"] if track["album"]["images"] else None
+            "album_art": track["album"]["images"][0]["url"] if track["album"]["images"] else None,
+            "isrc": track.get("external_ids", {}).get("isrc") # NEW: Extracting the ISRC from Spotify
         }
     except Exception:
         return None
 
-def get_apple_music_info(song_title: str, artist: str) -> dict | None:
+def get_apple_music_info(song_title: str, artist: str, isrc: str = None) -> dict | None:
     endpoint = "https://itunes.apple.com/search"
     clean_title = re.split(r' - | \(| \[', song_title)[0].strip()
-    queries = [f"{song_title} {artist}", f"{clean_title} {artist}"]
+    
+    # NEW: Build a list of queries prioritized from most exact (ISRC) to least exact
+    queries = []
+    if isrc:
+        queries.append(isrc) # Try the exact barcode first!
+        
+    queries.extend([f"{song_title} {artist}", f"{clean_title} {artist}"])
     
     for q in queries:
         params = {"term": q, "media": "music", "entity": "song", "limit": 1}
@@ -178,11 +185,15 @@ def get_apple_music_info(song_title: str, artist: str) -> dict | None:
                 }
         except Exception:
             continue
+            
     return None 
 
 def fetch_song_data(song_title: str, artist: str) -> dict | None:
     spotify_data = get_spotify_track_info(song_title, artist)
-    apple_data = get_apple_music_info(song_title, artist)
+    
+    # NEW: Pass the ISRC to Apple Music if we found one on Spotify
+    isrc = spotify_data.get("isrc") if spotify_data else None
+    apple_data = get_apple_music_info(song_title, artist, isrc)
     
     if not spotify_data and not apple_data:
         return None
