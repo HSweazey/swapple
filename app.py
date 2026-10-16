@@ -5,6 +5,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+import html
 from PIL import Image
 import streamlit.components.v1 as components
 import os
@@ -126,6 +127,7 @@ def spotify_track_data(track: dict) -> dict:
         "title": track["name"],
         "artist": track["artists"][0]["name"],
         "duration_ms": track.get("duration_ms"),
+        "explicit": track.get("explicit"),
         "isrc": track.get("external_ids", {}).get("isrc"),
         "album_id": track.get("album", {}).get("id"),
         "album_art": images[0]["url"] if images else None,
@@ -181,8 +183,10 @@ def apple_track_from_link(link: str) -> dict | None:
 def normalize(value: str) -> str:
     value = unicodedata.normalize("NFKD", value or "")
     value = "".join(char for char in value if not unicodedata.combining(char))
-    value = value.lower().replace("&", " and ")
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value)).strip()
+    value = value.casefold().replace("&", " and ")
+    # \W is Unicode-aware, so non-Latin titles (Hangul, kana, Cyrillic...) keep
+    # their letters instead of collapsing to an empty string.
+    return re.sub(r"[\W_]+", " ", value).strip()
 
 
 def version_flags(title: str) -> set[str]:
@@ -201,7 +205,11 @@ def version_flags(title: str) -> set[str]:
 
 
 def similarity(left: str, right: str) -> float:
-    return SequenceMatcher(None, normalize(left), normalize(right)).ratio()
+    left, right = normalize(left), normalize(right)
+    # Two empty strings would otherwise score as a perfect 1.0 match.
+    if not left or not right:
+        return 0.0
+    return SequenceMatcher(None, left, right).ratio()
 
 
 def duration_score(spotify_ms: int | None, apple_ms: int | None) -> float:
@@ -230,6 +238,8 @@ def apple_result_data(track: dict) -> dict:
         "artist": track.get("artistName", ""),
         "album": track.get("collectionName", ""),
         "duration_ms": track.get("trackTimeMillis"),
+        # "explicit", "cleaned" (censored version) or "notExplicit".
+        "explicitness": track.get("trackExplicitness"),
         "album_art": artwork_url or None,
     }
 
@@ -244,10 +254,28 @@ def score_apple_candidate(spotify_data: dict, apple_data: dict) -> dict:
     apple_versions = version_flags(apple_data["title"])
     if spotify_versions == apple_versions:
         score += 3
-    elif spotify_versions != apple_versions:
+    else:
         score -= 12
 
+    # Explicit and clean editions share title, artist and length, so without
+    # this they always tie and force a manual pick.
+    spotify_explicit = spotify_data.get("explicit")
+    apple_explicitness = apple_data.get("explicitness")
+    if spotify_explicit is not None and apple_explicitness:
+        if spotify_explicit and apple_explicitness == "cleaned":
+            score -= 8
+        elif not spotify_explicit and apple_explicitness == "explicit":
+            score -= 8
+
+    # The UPC lookup returns the same album Spotify has, which separates the
+    # album cut from an otherwise identical single or compilation release.
+    if apple_data.get("upc_match"):
+        score += 5
+
     apple_data.update({
+        # Unclamped score for ranking: clamping to 100 would turn near-perfect
+        # candidates back into ties.
+        "rank_score": score,
         "score": max(0, min(100, round(score))),
         "title_match": title_match,
         "artist_match": artist_match,
@@ -289,9 +317,12 @@ def itunes_lookup_by_upc(upc: str) -> list[dict]:
 def find_apple_candidates(spotify_data: dict) -> list[dict]:
     try:
         raw_results = []
+        upc_ids = set()
         upc = get_spotify_album_upc(spotify_data)
         if upc:
-            raw_results.extend(itunes_lookup_by_upc(upc))
+            upc_tracks = itunes_lookup_by_upc(upc)
+            upc_ids = {str(track.get("trackId", "")) for track in upc_tracks}
+            raw_results.extend(upc_tracks)
 
         # UPC is the preferred path. Text search remains a fallback for albums
         # that do not share a UPC across Spotify and the iTunes Store.
@@ -318,13 +349,14 @@ def find_apple_candidates(spotify_data: dict) -> list[dict]:
             if not apple_data["apple_url"] or not apple_id or apple_id in seen_ids:
                 continue
             seen_ids.add(apple_id)
+            apple_data["upc_match"] = apple_id in upc_ids
             candidate = score_apple_candidate(spotify_data, apple_data)
             # Never offer unrelated results just because iTunes returned them.
             # Artist names may vary because of featured performers, but the title
             # itself needs to be a strong match.
             if candidate["title_match"] >= 0.75 and candidate["artist_match"] >= 0.35:
                 candidates.append(candidate)
-        return sorted(candidates, key=lambda candidate: candidate["score"], reverse=True)
+        return sorted(candidates, key=lambda candidate: candidate["rank_score"], reverse=True)
     except requests.RequestException:
         return []
 
@@ -334,9 +366,9 @@ def is_confident_match(candidates: list[dict]) -> bool:
         return False
     best = candidates[0]
     runner_up = candidates[1] if len(candidates) > 1 else None
-    if best["score"] < AUTO_MATCH_SCORE:
+    if best["rank_score"] < AUTO_MATCH_SCORE:
         return False
-    return not runner_up or best["score"] - runner_up["score"] >= AMBIGUITY_MARGIN
+    return not runner_up or best["rank_score"] - runner_up["rank_score"] >= AMBIGUITY_MARGIN
 
 
 def build_song_data(spotify_data: dict | None, apple_data: dict | None) -> dict | None:
@@ -352,47 +384,67 @@ def build_song_data(spotify_data: dict | None, apple_data: dict | None) -> dict 
         "Date Added": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
+def html_text(value) -> str:
+    """Escape user/API text for the card HTML.
+
+    Newlines become <br> because a blank line would end Streamlit's HTML block
+    and dump the rest of the card as raw text; "$" is escaped so it isn't
+    treated as LaTeX.
+    """
+    if value is None or pd.isna(value):
+        return ""
+    text = html.escape(str(value)).replace("$", "&#36;")
+    return "<br>".join(line.strip() for line in text.splitlines())
+
+
+def html_attr(value) -> str:
+    return html.escape(str(value), quote=True)
+
+
 def render_song_card(title, artist, spotify_id, spotify_url, apple_url, rating=None, review_text=None, reviewer=None, note=None):
     card_html = f"""<div class="gallery-card">
-<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{title}</h4>
-<p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{artist}</p>"""
+<h4 style="margin-bottom: 5px; margin-top: 0px; color: #333;">{html_text(title)}</h4>
+<p style="margin-top: 0px; margin-bottom: 15px; color: #666; font-style: italic;">{html_text(artist)}</p>"""
 
     if pd.notna(note) and str(note).strip() != "":
         card_html += f"""
         <div class="note-box">
-            <p style="margin: 0; font-size: 13px; color: #d63384;"><strong>💭 Note:</strong> {note}</p>
+            <p style="margin: 0; font-size: 13px; color: #d63384;"><strong>💭 Note:</strong> {html_text(note)}</p>
         </div>
         """
-    
+
     if pd.notna(spotify_id) and spotify_id != "":
-        card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{spotify_id}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
-    
+        card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="https://open.spotify.com/embed/track/{html_attr(spotify_id)}" width="100%" height="80" frameBorder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>"""
+
     if pd.notna(apple_url) and apple_url != "":
-        apple_embed_url = apple_url.replace("music.apple.com", "embed.music.apple.com")
-        card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{apple_embed_url}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
-    
+        apple_embed_url = str(apple_url).replace("music.apple.com", "embed.music.apple.com")
+        card_html += f"""<iframe style="border-radius:12px; margin-top: 5px;" src="{html_attr(apple_embed_url)}" width="100%" height="150" frameBorder="0" allowfullscreen="" allow="autoplay *; encrypted-media *;" loading="lazy"></iframe>"""
+
     if pd.notna(review_text) and str(review_text).strip() != "":
         try:
             star_count = int(float(rating))
             stars = "⭐" * star_count
         except (ValueError, TypeError):
-            stars = "⭐" 
-            
-        rev_name = reviewer if pd.notna(reviewer) else "Unknown"
+            stars = "⭐"
+
+        rev_name = reviewer if pd.notna(reviewer) and str(reviewer).strip() else "Unknown"
         card_html += f"""
         <div class="review-box">
-            <strong>{rev_name}'s Rating:</strong> {stars}<br>
-            <p style="margin-top:5px; margin-bottom:0; font-size:14px; color:#444;">"{review_text}"</p>
+            <strong>{html_text(rev_name)}'s Rating:</strong> {stars}<br>
+            <p style="margin-top:5px; margin-bottom:0; font-size:14px; color:#444;">"{html_text(review_text)}"</p>
         </div>
         """
 
     card_html += '<div class="link-container">'
     if pd.notna(apple_url) and apple_url != "":
-        card_html += f'<a href="{apple_url}" target="_blank" class="apple-link">Apple 🍎</a>'
+        card_html += f'<a href="{html_attr(apple_url)}" target="_blank" class="apple-link">Apple 🍎</a>'
     if pd.notna(spotify_url) and spotify_url != "":
-        card_html += f'<a href="{spotify_url}" target="_blank" class="spotify-link">Spotify 🟢</a>'
+        card_html += f'<a href="{html_attr(spotify_url)}" target="_blank" class="spotify-link">Spotify 🟢</a>'
     card_html += '</div></div>'
-    
+
+    # Drop indentation and whitespace-only lines: markdown treats a blank line
+    # as the end of the HTML block (e.g. a note followed by a review with no embeds).
+    card_html = "\n".join(line.strip() for line in card_html.splitlines() if line.strip())
     st.markdown(card_html, unsafe_allow_html=True)
 
 
@@ -450,6 +502,11 @@ def finish_song(new_song: dict, action: str, playlist: str, note: str) -> None:
 if "apple_match_pending" not in st.session_state:
     st.session_state.apple_match_pending = None
 
+
+def mark_input_source(source: str) -> None:
+    """Remember which tab was edited last, since both tabs keep their values."""
+    st.session_state.input_source = source
+
 # --- MAIN APP UI ---
 st.title("🌸 Our Music Hub 🌸")
 
@@ -462,12 +519,21 @@ with st.container():
     with input_tab1:
         col1, col2 = st.columns(2)
         with col1:
-            song_input = st.text_input("Song Title", placeholder="e.g. Pink Pony Club")
+            song_input = st.text_input(
+                "Song Title", placeholder="e.g. Pink Pony Club",
+                on_change=mark_input_source, args=("typed",),
+            )
         with col2:
-            artist_input = st.text_input("Artist", placeholder="e.g. Chappell Roan")
-            
+            artist_input = st.text_input(
+                "Artist", placeholder="e.g. Chappell Roan",
+                on_change=mark_input_source, args=("typed",),
+            )
+
     with input_tab2:
-        link_input = st.text_input("Spotify or Apple Music Link", placeholder="https://open.spotify.com/track/...")
+        link_input = st.text_input(
+            "Spotify or Apple Music Link", placeholder="https://open.spotify.com/track/...",
+            on_change=mark_input_source, args=("link",),
+        )
         
     note_input = st.text_input("Add a note (optional) 💭", placeholder="e.g. The bridge on this song is insane!")
     playlist_selection = st.radio("Whose playlist is this for?", ["Hannah", "Alyssa"], horizontal=True)
@@ -485,8 +551,15 @@ with st.container():
         spotify_data = None
         known_apple_data = None
 
+        # If both tabs are filled in, use whichever one was edited most recently.
+        has_typed = bool(song_input and artist_input)
+        if link_input and has_typed:
+            use_link = st.session_state.get("input_source", "link") == "link"
+        else:
+            use_link = bool(link_input)
+
         with st.spinner("Finding the right recording..."):
-            if link_input:
+            if use_link:
                 if "spotify.com" in link_input:
                     # A Spotify URL identifies the precise Spotify recording: never search it again.
                     spotify_data = get_spotify_track_from_link(link_input)
@@ -499,12 +572,12 @@ with st.container():
                         )
                 else:
                     st.error("Please paste a direct Spotify or Apple Music track link.")
-            elif song_input and artist_input:
+            elif has_typed:
                 spotify_data = get_spotify_track_info(song_input, artist_input)
             else:
                 st.warning("Please enter a song and artist, or paste a link!")
 
-        if link_input and not spotify_data and not known_apple_data:
+        if use_link and not spotify_data and not known_apple_data:
             st.error("Couldn't extract that song. Ensure the link is for a single track.")
         elif spotify_data or known_apple_data:
             if known_apple_data:
@@ -531,7 +604,7 @@ with st.container():
                         "note": note_input,
                     }
                     st.rerun()
-        elif song_input and artist_input:
+        elif has_typed:
             st.error("Couldn't find that song on Spotify. Check the spelling and try again!")
 
     pending_match = st.session_state.apple_match_pending
